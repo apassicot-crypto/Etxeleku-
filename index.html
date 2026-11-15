@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Etxeleku Rutas</title>
+  <meta name="description" content="Rutas seguras para autocaravana, áreas de vaciado y parkings gratis.">
+  <meta name="theme-color" content="#1f6f5c">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Etxeleku">
+  <link rel="stylesheet" href="lib/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="map" aria-label="Mapa"></div>
+
+  <div id="topbar">
+    <button id="btnLocate" class="fab" title="Mi posición" aria-label="Mi posición">◎</button>
+    <button id="btnSearchHere" class="fab wide" title="Buscar áreas y parkings en esta zona">🚐 Buscar aquí</button>
+    <button id="btnLimits" class="fab" title="Ver límites de altura, ancho y peso en esta zona" aria-label="Ver límites">⚠️</button>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <section id="sheet" class="collapsed">
+    <button id="sheetHandle" aria-label="Abrir o cerrar panel"><span></span></button>
+    <nav id="tabs">
+      <button data-tab="ruta" class="active">Ruta</button>
+      <button data-tab="lugares">Lugares</button>
+      <button data-tab="vehiculo">Etxeleku</button>
+    </nav>
+
+    <div class="tab" id="tab-ruta">
+      <label class="field">
+        <span>Desde</span>
+        <div class="row">
+          <input id="from" placeholder="Mi posición" autocomplete="off">
+          <button id="fromMe" class="small" title="Usar mi posición">◎</button>
+        </div>
+      </label>
+      <label class="field">
+        <span>Hasta</span>
+        <input id="to" placeholder="Pueblo, dirección o lugar" autocomplete="off">
+      </label>
+      <ul id="suggest" class="suggest" hidden></ul>
+      <label class="check"><input type="checkbox" id="avoidTolls"> Evitar peajes</label>
+      <div class="row gap">
+        <button id="btnRoute" class="primary">Calcular ruta segura</button>
+        <button id="btnClear" class="ghost">Borrar</button>
+      </div>
+      <div id="routeInfo"></div>
+    </div>
+
+    <div class="tab" id="tab-lugares" hidden>
+      <p class="hint">Pulsa <b>🚐 Buscar aquí</b> para ver lo que hay en la zona del mapa, o <b>Buscar a lo largo de la ruta</b> cuando tengas una ruta.</p>
+      <div class="filters">
+        <label class="check"><input type="checkbox" data-kind="dump" checked> 🚰 Vaciado / llenado</label>
+        <label class="check"><input type="checkbox" data-kind="water" checked> 💧 Agua potable</label>
+        <label class="check"><input type="checkbox" data-kind="area" checked> 🚐 Áreas AC y campings</label>
+        <label class="check"><input type="checkbox" data-kind="parking" checked> 🅿️ Parkings para AC</label>
+        <label class="check strong"><input type="checkbox" id="onlyFree"> Solo gratis (o casi)</label>
+      </div>
+      <button id="btnAlongRoute" class="primary" disabled>Buscar a lo largo de la ruta</button>
+      <ul id="placeList" class="list"></ul>
+    </div>
+
+    <div class="tab" id="tab-vehiculo" hidden>
+      <p class="hint">Medidas que usa la app para calcular rutas y avisarte de límites.</p>
+      <div class="grid2">
+        <label class="field"><span>Alto (m)</span><input id="vHeight" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="field"><span>Ancho (m)</span><input id="vWidth" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="field"><span>Largo (m)</span><input id="vLength" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="field"><span>Peso (t)</span><input id="vWeight" type="number" step="0.1" inputmode="decimal"></label>
+      </div>
+      <label class="field"><span>"Casi gratis" hasta (€)</span><input id="vMaxPrice" type="number" step="1" inputmode="decimal"></label>
+      <div class="row gap">
+        <button id="btnSaveVehicle" class="primary">Guardar</button>
+        <button id="btnResetVehicle" class="ghost">Valores de Etxeleku</button>
+      </div>
+      <p class="hint small">Rapido 9092DF · Fiat Ducato 3.0 · 2010. Alto real con baca 3,10 m. Ancho con retrovisores 2,70 m.</p>
+      <p class="hint small">Datos: © colaboradores de OpenStreetMap. Rutas: Valhalla (FOSSGIS). Los datos los aporta la comunidad y pueden tener errores: mira siempre las señales.</p>
+    </div>
+  </section>
+
+  <script src="lib/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
