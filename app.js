@@ -8,6 +8,7 @@ const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 const OVERPASS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
 ];
 
 // ---------- Utilidades ----------
@@ -256,12 +257,14 @@ $('#btnClear').onclick = () => {
 async function overpass(query) {
   let lastErr;
   for (const url of OVERPASS) {
+    const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 25000);
     try {
-      const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query),
+      const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(query), signal: ctrl.signal,
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-      if (r.ok) return (await r.json()).elements || [];
+      if (r.ok) { const j = await r.json(); clearTimeout(timer); return j.elements || []; }
       lastErr = new Error('overpass ' + r.status);
     } catch (e) { lastErr = e; }
+    clearTimeout(timer);
   }
   throw lastErr;
 }
@@ -341,6 +344,7 @@ function servicesOf(t, kind) {
 }
 
 let lastPlaces = [];
+let placesShown = null;
 function renderPlaces(elements) {
   placesLayer.clearLayers();
   const enabled = new Set($$('.filters input[data-kind]').filter((i) => i.checked).map((i) => i.dataset.kind));
@@ -386,6 +390,7 @@ function renderPlaces(elements) {
     li.onclick = () => { map.setView([lat, lon], Math.max(map.getZoom(), 14)); m.openPopup(); if (innerWidth < 760) closeSheet(); };
     ul.appendChild(li);
   }
+  placesShown = items.length ? items : null;
   return items.length;
 }
 let loadedBounds = null;   // zona ya cargada automáticamente
@@ -399,22 +404,46 @@ async function searchPlaces(filter, where, auto = false) {
     return true;
   } catch (e) { console.error(e); if (!auto) toast('El servidor de mapas está ocupado. Prueba en un momento.'); return false; }
 }
-let autoTimer;
+function status(msg, kind = '') {
+  const el = $('#placesStatus'); el.textContent = msg; el.className = kind; el.hidden = !msg;
+}
+// Caja de búsqueda alrededor del centro: como mínimo ~25 km de lado, aunque el mapa esté muy cerca.
+function searchBox(minHalfDeg) {
+  const v = map.getBounds().pad(0.5); const c = map.getCenter();
+  const hLat = Math.max((v.getNorth() - v.getSouth()) / 2, minHalfDeg);
+  const hLon = Math.max((v.getEast() - v.getWest()) / 2, minHalfDeg * 1.4);
+  return L.latLngBounds([c.lat - hLat, c.lng - hLon], [c.lat + hLat, c.lng + hLon]);
+}
+const boxFilter = (b) => `(${b.getSouth().toFixed(4)},${b.getWest().toFixed(4)},${b.getNorth().toFixed(4)},${b.getEast().toFixed(4)})`;
+let autoTimer, autoBusy = false;
 function autoPlaces() {
   clearTimeout(autoTimer);
   autoTimer = setTimeout(async () => {
-    if (alongRoute || map.getZoom() < 11) return;
+    if (alongRoute || autoBusy) return;
+    if (map.getZoom() < 9) { status('Acerca el mapa para ver áreas y parkings'); return; }
     if (loadedBounds && loadedBounds.contains(map.getBounds())) return;
-    const b = map.getBounds().pad(0.5);
-    const ok = await searchPlaces(`(${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()})`, '', true);
-    if (ok) loadedBounds = b;
-  }, 800);
+    autoBusy = true;
+    try {
+      status('Cargando áreas y parkings…');
+      let b = searchBox(0.12);
+      let ok = await searchPlaces(boxFilter(b), '', true);
+      if (ok && !placesShown) {
+        status('No hay nada cerca, busco más lejos…');
+        b = searchBox(0.45);
+        ok = await searchPlaces(boxFilter(b), '', true);
+        if (ok && placesShown) map.fitBounds(L.latLngBounds(placesShown.map((x) => [x.lat, x.lon])).extend(map.getCenter()), { padding: [40, 40], maxZoom: 13 });
+      }
+      if (!ok) { status('El servidor de datos no responde. Reintento en 20 s…', 'err'); autoTimer = setTimeout(autoPlaces, 20000); return; }
+      loadedBounds = b;
+      status(placesShown ? `${placesShown.length} lugares en el mapa` : 'No hay áreas ni parkings registrados por aquí', placesShown ? 'ok' : '');
+    } finally { autoBusy = false; }
+  }, 700);
 }
 map.on('moveend', autoPlaces);
 $('#btnSearchHere').onclick = () => {
   if (map.getZoom() < 9) { toast('Acerca un poco más el mapa para buscar'); return; }
-  alongRoute = false; loadedBounds = map.getBounds();
-  searchPlaces(`(${bboxStr()})`, 'en esta zona');
+  alongRoute = false; loadedBounds = null; autoPlaces();
+  toast('Buscando lugares en esta zona…');
 };
 $('#btnAlongRoute').onclick = () => { if (currentRoute) { alongRoute = true; } if (currentRoute) searchPlaces(`(around:3000,${routeLine(400)})`, 'a lo largo de la ruta'); };
 $$('.filters input').forEach((i) => { i.onchange = () => renderPlaces(lastPlaces); });
