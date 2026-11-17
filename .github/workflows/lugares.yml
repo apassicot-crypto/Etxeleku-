@@ -1,5 +1,6 @@
 name: Actualizar lugares
-# Descarga los mapas de OpenStreetMap (Geofabrik) y saca las áreas, vaciados, agua y parkings de Europa y los guarda en data/places.
+# Descarga los mapas de OpenStreetMap (Geofabrik), saca las áreas, vaciados, agua y parkings
+# de cada país a la vez, y los guarda juntos en data/places.
 # Para actualizarlos: pestaña Actions > "Actualizar lugares" > "Run workflow".
 on:
   workflow_dispatch:
@@ -12,15 +13,40 @@ concurrency:
   group: lugares
   cancel-in-progress: true
 jobs:
-  build:
+  pais:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        region: [spain, portugal, andorra, france, monaco, italy, switzerland, austria, germany,
+                 belgium, luxembourg, netherlands, slovenia, croatia, greece, great-britain,
+                 ireland-and-northern-ireland, denmark]
     steps:
       - uses: actions/checkout@v4
       - name: Instalar osmium
         run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
-      - name: Descargar lugares de Europa
-        run: python3 scripts/build_places.py
+      - name: Sacar lugares de ${{ matrix.region }}
+        run: python3 scripts/build_places.py extract ${{ matrix.region }} ${{ runner.temp }}/${{ matrix.region }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lugares-${{ matrix.region }}
+          path: ${{ runner.temp }}/${{ matrix.region }}.json
+          retention-days: 3
+  juntar:
+    needs: pais
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lugares-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/paises
+      - name: Juntar en trocitos
+        run: python3 scripts/build_places.py merge ${{ runner.temp }}/paises
       - name: Guardar
         run: |
           git config user.name "etxeleku-bot"

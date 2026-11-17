@@ -36,41 +36,48 @@ def run(*cmd):
     subprocess.run(cmd, check=True)
 
 
-def main():
-    tiles, seen, total, done = {}, set(), 0, []
+def extract(region, outfile):
+    """Saca los lugares de un país y los guarda en outfile (lista JSON)."""
     pbf, flt, gj = (os.path.join(TMP, n) for n in ('r.osm.pbf', 'f.osm.pbf', 'f.geojsonseq'))
-    for region in REGIONS:
-        try:
-            run('curl', '-sSfL', '--retry', '3', '-o', pbf, f'https://download.geofabrik.de/europe/{region}-latest.osm.pbf')
-            run('osmium', 'tags-filter', pbf, 'nwr/amenity=sanitary_dump_station,water_point', 'nwr/tourism=caravan_site',
-                'nwr/motorhome=yes,designated', '-o', flt, '--overwrite')
-            run('osmium', 'export', flt, '-f', 'geojsonseq', '-x', 'print_record_separator=false', '-a', 'type,id',
-                '--geometry-types=point,linestring,polygon', '-o', gj, '--overwrite')
-        except subprocess.CalledProcessError as ex:
-            print('  ERROR en', region, ex, flush=True)
+    run('curl', '-sSfL', '--retry', '3', '-o', pbf, f'https://download.geofabrik.de/europe/{region}-latest.osm.pbf')
+    run('osmium', 'tags-filter', pbf, 'nwr/amenity=sanitary_dump_station,water_point', 'nwr/tourism=caravan_site',
+        'nwr/motorhome=yes,designated', '-o', flt, '--overwrite')
+    os.remove(pbf)
+    run('osmium', 'export', flt, '-f', 'geojsonseq', '-x', 'print_record_separator=false', '-a', 'type,id',
+        '--geometry-types=point,linestring,polygon', '-o', gj, '--overwrite')
+    items = []
+    with open(gj) as fh:
+        for line in fh:
+            line = line.strip().lstrip('\x1e')
+            if not line:
+                continue
+            f = json.loads(line)
+            p = f['properties']
+            if not wanted(p):
+                continue
+            cs = coords(f['geometry'])
+            lon = sum(c[0] for c in cs) / len(cs)
+            lat = sum(c[1] for c in cs) / len(cs)
+            t = {k: (v[:200] if k == 'description' else v) for k, v in p.items() if k in KEEP}
+            items.append([p['@type'][0] + str(p['@id']), round(lat, 5), round(lon, 5), t])
+    with open(outfile, 'w') as fh:
+        json.dump(items, fh, ensure_ascii=False)
+    print(f'{region}: {len(items)} lugares', flush=True)
+
+
+def merge(folder):
+    """Junta los países en trocitos de 1x1 grado dentro de data/places."""
+    tiles, seen, total, done = {}, set(), 0, []
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith('.json'):
             continue
-        finally:
-            if os.path.exists(pbf):
-                os.remove(pbf)
-        n0 = total
-        with open(gj) as fh:
-            for line in fh:
-                f = json.loads(line)
-                p = f['properties']
-                if not wanted(p):
-                    continue
-                key = p['@type'][0] + str(p['@id'])
-                if key in seen:
-                    continue
-                seen.add(key)
-                cs = coords(f['geometry'])
-                lon = sum(c[0] for c in cs) / len(cs)
-                lat = sum(c[1] for c in cs) / len(cs)
-                t = {k: (v[:200] if k == 'description' else v) for k, v in p.items() if k in KEEP}
-                tiles.setdefault(f'{int(lat // 1)}_{int(lon // 1)}', []).append([key, round(lat, 5), round(lon, 5), t])
-                total += 1
-        print(f'{region}: {total - n0} lugares', flush=True)
-        done.append(region)
+        done.append(name[:-5])
+        for key, lat, lon, t in json.load(open(os.path.join(folder, name))):
+            if key in seen:
+                continue
+            seen.add(key)
+            tiles.setdefault(f'{int(lat // 1)}_{int(lon // 1)}', []).append([key, lat, lon, t])
+            total += 1
     if total < 1000:
         sys.exit(f'Muy pocos lugares ({total}); no se guarda nada.')
     os.makedirs(OUT, exist_ok=True)
@@ -82,8 +89,11 @@ def main():
     with open(os.path.join(OUT, 'index.json'), 'w') as fh:
         json.dump({'updated': datetime.date.today().isoformat(), 'total': total, 'regions': done,
                    'tiles': sorted(tiles)}, fh)
-    print('total', total, 'trozos', len(tiles))
+    print('total', total, 'trozos', len(tiles), 'países', ', '.join(done))
 
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1] == 'extract':
+        extract(sys.argv[2], sys.argv[3])
+    else:
+        merge(sys.argv[2])
