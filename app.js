@@ -46,14 +46,46 @@ let meMarker = null;
 let myPos = null;
 
 // ---------- Panel inferior ----------
-$('#sheetHandle').onclick = () => $('#sheet').classList.toggle('collapsed');
-function openSheet() { $('#sheet').classList.remove('collapsed'); }
+// Un toque abre o cierra el panel. También se puede deslizar hacia abajo o hacia arriba.
+function setSheet(open) {
+  $('#sheet').classList.toggle('collapsed', !open);
+  $('#handleText').textContent = open ? '▼ Cerrar panel' : '▲ Abrir panel';
+}
+const sheetOpen = () => !$('#sheet').classList.contains('collapsed');
+function openSheet() { setSheet(true); }
+function closeSheet() { setSheet(false); }
+$('#sheetHandle').onclick = () => setSheet(!sheetOpen());
+let touchY = null;
+$('#sheet').addEventListener('touchstart', (e) => { touchY = e.touches[0].clientY; }, { passive: true });
+$('#sheet').addEventListener('touchend', (e) => {
+  if (touchY == null) return; const dy = e.changedTouches[0].clientY - touchY; touchY = null;
+  const tab = $$('.tab').find((t) => !t.hidden);
+  if (dy > 60 && (!tab || tab.scrollTop <= 0)) closeSheet(); else if (dy < -60 && !sheetOpen()) openSheet();
+});
 function showTab(name) {
   $$('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   $$('.tab').forEach((t) => { t.hidden = t.id !== 'tab-' + name; });
   openSheet();
 }
-$$('#tabs button').forEach((b) => { b.onclick = () => showTab(b.dataset.tab); });
+$$('#tabs button[data-tab]').forEach((b) => {
+  // Tocar la pestaña que ya está abierta cierra el panel.
+  b.onclick = () => { if (b.classList.contains('active') && sheetOpen()) closeSheet(); else showTab(b.dataset.tab); };
+});
+
+// Pestaña Google: abre Google Maps con el mismo destino (o la zona que estás mirando).
+$('#tabGoogle').onclick = () => {
+  const ll = (p) => `${p.lat},${p.lon}`;
+  let url;
+  if (points.to) {
+    url = `https://www.google.com/maps/dir/?api=1&destination=${ll(points.to)}&travelmode=driving`;
+    if (points.from && points.from.name !== 'Mi posición') url += `&origin=${ll(points.from)}`;
+    toast('Ojo: Google no sabe la altura de Etxeleku. Si hay dudas, manda la ruta de esta app.', 4000);
+  } else {
+    const c = map.getCenter();
+    url = `https://www.google.com/maps/@?api=1&map_action=map&center=${c.lat.toFixed(5)},${c.lng.toFixed(5)}&zoom=${map.getZoom()}`;
+  }
+  window.open(url, '_blank', 'noopener');
+};
 
 // ---------- Posición ----------
 function locate(fly = true) {
@@ -71,6 +103,22 @@ function locate(fly = true) {
   });
 }
 $('#btnLocate').onclick = () => locate(true);
+
+function startTracking() {
+  if (!navigator.geolocation) return;
+  let first = true;
+  navigator.geolocation.watchPosition((p) => {
+    myPos = { lat: p.coords.latitude, lon: p.coords.longitude };
+    if (meMarker) meMarker.setLatLng([myPos.lat, myPos.lon]);
+    else meMarker = L.circleMarker([myPos.lat, myPos.lon], { radius: 10, color: '#fff', weight: 3, fillColor: '#1a73e8', fillOpacity: 1 }).addTo(map).bindTooltip('Estás aquí');
+    if (first) {
+      first = false;
+      map.setView([myPos.lat, myPos.lon], 13);
+      if (!points.from) setPoint('from', { ...myPos, name: 'Mi posición' });
+    }
+  }, () => { toast('Activa el permiso de ubicación para ver dónde estás'); },
+  { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+}
 
 // ---------- Búsqueda de lugares (Nominatim) ----------
 const points = { from: null, to: null };
@@ -186,7 +234,8 @@ function drawRoute(trip) {
   L.circleMarker(coords[coords.length - 1], { radius: 8, color: '#fff', weight: 3, fillColor: '#c0392b', fillOpacity: 1 }).addTo(routeLayer);
   map.fitBounds(line.getBounds(), { padding: [30, 30] });
   $('#btnAlongRoute').disabled = false;
-  toast('Ruta lista');
+  toast(`Ruta lista: ${fmtKm(trip.summary.length)}, ${fmtTime(trip.summary.time)}. Abre el panel para ver los detalles.`, 4500);
+  if (innerWidth < 760) closeSheet();
 
   const steps = trip.legs.flatMap((l) => l.maneuvers);
   $('#routeInfo').innerHTML = `
@@ -199,7 +248,7 @@ function drawRoute(trip) {
 
 $('#btnRoute').onclick = route;
 $('#btnClear').onclick = () => {
-  routeLayer.clearLayers(); currentRoute = null; points.from = points.to = null;
+  routeLayer.clearLayers(); currentRoute = null; points.from = points.to = null; alongRoute = false; loadedBounds = null; autoPlaces();
   $('#from').value = ''; $('#to').value = ''; $('#routeInfo').innerHTML = ''; $('#btnAlongRoute').disabled = true;
 };
 
@@ -313,7 +362,7 @@ function renderPlaces(elements) {
   for (const it of items) {
     const { t, lat, lon, kind, price } = it;
     const name = t.name || KINDS[kind].label;
-    const icon = L.divIcon({ className: '', html: `<div class="pin ${price.cls}"><span>${KINDS[kind].icon}</span></div>`, iconSize: [32, 32], iconAnchor: [16, 32], popupAnchor: [0, -30] });
+    const icon = L.divIcon({ className: '', html: `<div class="pin ${price.cls}"><span>${KINDS[kind].icon}</span></div>`, iconSize: [50, 50], iconAnchor: [25, 60], popupAnchor: [0, -56] });
     const svc = servicesOf(t, kind);
     const html = `<h3>${KINDS[kind].icon} ${esc(name)}</h3>
       <div><span class="badge ${price.cls}">${price.text}</span>${esc(KINDS[kind].label)}</div>
@@ -334,25 +383,40 @@ function renderPlaces(elements) {
     });
     const li = document.createElement('li');
     li.innerHTML = `<div class="t">${KINDS[kind].icon} ${esc(name)}</div><div class="s"><span class="badge ${price.cls}">${price.text}</span>${svc.map(esc).join(' · ')}</div>`;
-    li.onclick = () => { map.setView([lat, lon], Math.max(map.getZoom(), 14)); m.openPopup(); if (innerWidth < 760) $('#sheet').classList.add('collapsed'); };
+    li.onclick = () => { map.setView([lat, lon], Math.max(map.getZoom(), 14)); m.openPopup(); if (innerWidth < 760) closeSheet(); };
     ul.appendChild(li);
   }
   return items.length;
 }
-async function searchPlaces(filter, where) {
-  toast(`Buscando lugares ${where}…`, 0);
+let loadedBounds = null;   // zona ya cargada automáticamente
+let alongRoute = false;     // si se buscó a lo largo de la ruta, no se sustituye al mover el mapa
+async function searchPlaces(filter, where, auto = false) {
+  if (!auto) toast(`Buscando lugares ${where}…`, 0);
   try {
     lastPlaces = await overpass(placesQuery(filter));
     const n = renderPlaces(lastPlaces);
-    toast(n ? `${n} lugares encontrados` : 'No hay lugares con esos filtros aquí');
-    showTab('lugares');
-  } catch (e) { console.error(e); toast('El servidor de mapas está ocupado. Prueba en un momento.'); }
+    if (!auto) { toast(n ? `${n} lugares encontrados` : 'No hay lugares con esos filtros aquí'); showTab('lugares'); }
+    return true;
+  } catch (e) { console.error(e); if (!auto) toast('El servidor de mapas está ocupado. Prueba en un momento.'); return false; }
 }
+let autoTimer;
+function autoPlaces() {
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(async () => {
+    if (alongRoute || map.getZoom() < 11) return;
+    if (loadedBounds && loadedBounds.contains(map.getBounds())) return;
+    const b = map.getBounds().pad(0.5);
+    const ok = await searchPlaces(`(${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()})`, '', true);
+    if (ok) loadedBounds = b;
+  }, 800);
+}
+map.on('moveend', autoPlaces);
 $('#btnSearchHere').onclick = () => {
   if (map.getZoom() < 9) { toast('Acerca un poco más el mapa para buscar'); return; }
+  alongRoute = false; loadedBounds = map.getBounds();
   searchPlaces(`(${bboxStr()})`, 'en esta zona');
 };
-$('#btnAlongRoute').onclick = () => { if (currentRoute) searchPlaces(`(around:3000,${routeLine(400)})`, 'a lo largo de la ruta'); };
+$('#btnAlongRoute').onclick = () => { if (currentRoute) { alongRoute = true; } if (currentRoute) searchPlaces(`(around:3000,${routeLine(400)})`, 'a lo largo de la ruta'); };
 $$('.filters input').forEach((i) => { i.onchange = () => renderPlaces(lastPlaces); });
 
 // ---------- Límites: altura, ancho, peso ----------
@@ -443,3 +507,7 @@ fillVehicle();
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
+
+// Al abrir la app: buscar tu posición y los lugares de alrededor.
+startTracking();
+autoPlaces();

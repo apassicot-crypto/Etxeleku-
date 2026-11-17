@@ -26,11 +26,12 @@
   <div id="toast" role="status" aria-live="polite"></div>
 
   <section id="sheet" class="collapsed">
-    <button id="sheetHandle" aria-label="Abrir o cerrar panel"><span></span></button>
+    <button id="sheetHandle" aria-label="Abrir o cerrar panel"><span class="grip"></span><span id="handleText">▲ Abrir panel</span></button>
     <nav id="tabs">
       <button data-tab="ruta" class="active">Ruta</button>
       <button data-tab="lugares">Lugares</button>
       <button data-tab="vehiculo">Etxeleku</button>
+      <button id="tabGoogle" class="google" title="Abrir en Google Maps">Google</button>
     </nav>
 
     <div class="tab" id="tab-ruta">
@@ -55,7 +56,7 @@
     </div>
 
     <div class="tab" id="tab-lugares" hidden>
-      <p class="hint">Pulsa <b>🚐 Buscar aquí</b> para ver lo que hay en la zona del mapa, o <b>Buscar a lo largo de la ruta</b> cuando tengas una ruta.</p>
+      <p class="hint">Los lugares salen solos al acercar el mapa. También puedes pulsar <b>🚐 Buscar aquí</b>, o <b>Buscar a lo largo de la ruta</b> cuando tengas una ruta.</p>
       <div class="filters">
         <label class="check"><input type="checkbox" data-kind="dump" checked> 🚰 Vaciado / llenado</label>
         <label class="check"><input type="checkbox" data-kind="water" checked> 💧 Agua potable</label>
