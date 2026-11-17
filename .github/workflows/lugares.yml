@@ -1,5 +1,5 @@
 name: Actualizar lugares
-# Descarga de OpenStreetMap las áreas, vaciados, agua y parkings de Europa y los guarda en data/places.
+# Descarga los mapas de OpenStreetMap (Geofabrik) y saca las áreas, vaciados, agua y parkings de Europa y los guarda en data/places.
 # Para actualizarlos: pestaña Actions > "Actualizar lugares" > "Run workflow".
 on:
   workflow_dispatch:
@@ -17,15 +17,8 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Prueba de los servidores (como lo haría el móvil)
-        run: |
-          for u in https://overpass-api.de/api/interpreter https://overpass.private.coffee/api/interpreter https://overpass.kumi.systems/api/interpreter; do
-            echo "== $u"
-            curl -s -m 60 -o out.json -D - -H 'Origin: https://apassicot-crypto.github.io' \
-              --data-urlencode 'data=[out:json][timeout:25];nwr["tourism"="caravan_site"](41.7,2.9,41.9,3.1);out center tags;' "$u" \
-              | grep -iE '^HTTP|access-control' || true
-            head -c 300 out.json; echo
-          done
+      - name: Instalar osmium
+        run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
       - name: Descargar lugares de Europa
         run: python3 scripts/build_places.py
       - name: Guardar
