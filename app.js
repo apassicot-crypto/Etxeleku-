@@ -323,10 +323,10 @@ function parsePrice(charge) {
 }
 function priceInfo(t) {
   const fee = (t.fee || '').toLowerCase();
-  const price = parsePrice(t.charge);
+  const price = parsePrice(t.charge) ?? (/\d/.test(t.fee || '') ? parsePrice(t.fee) : null);
   if (fee === 'no' || fee === 'free' || price === 0) return { cls: 'free', text: 'Gratis' };
   if (fee === 'donation') return { cls: 'cheap', text: 'Donativo' };
-  if (price != null) return { cls: price <= vehicle.maxPrice ? 'cheap' : 'paid', text: esc(t.charge) };
+  if (price != null) return { cls: price <= vehicle.maxPrice ? 'cheap' : 'paid', text: esc(t.charge || t.fee) };
   if (fee === 'yes' || fee) return { cls: 'paid', text: 'De pago' };
   return { cls: 'unknown', text: 'Precio sin datos' };
 }

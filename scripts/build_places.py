@@ -39,7 +39,7 @@ def run(*cmd):
 def extract(region, outfile):
     """Saca los lugares de un país y los guarda en outfile (lista JSON)."""
     pbf, flt, gj = (os.path.join(TMP, n) for n in ('r.osm.pbf', 'f.osm.pbf', 'f.geojsonseq'))
-    run('curl', '-sSfL', '--retry', '3', '-o', pbf, f'https://download.geofabrik.de/europe/{region}-latest.osm.pbf')
+    run('curl', '-sSfL', '--retry', '8', '--retry-all-errors', '--retry-delay', '30', '-o', pbf, f'https://download.geofabrik.de/europe/{region}-latest.osm.pbf')
     run('osmium', 'tags-filter', pbf, 'nwr/amenity=sanitary_dump_station,water_point', 'nwr/tourism=caravan_site',
         'nwr/motorhome=yes,designated', '-o', flt, '--overwrite')
     os.remove(pbf)
