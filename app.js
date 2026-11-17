@@ -244,6 +244,7 @@ function drawRoute(trip) {
     <p class="hint">Ruta calculada como vehículo de ${fmtM(vehicle.height)} de alto, ${fmtM(vehicle.width)} de ancho, ${fmtM(vehicle.length)} de largo y ${String(vehicle.weight).replace('.', ',')} t.</p>
     <div id="routeCheck"><p class="hint">Comprobando puentes y límites en el camino…</p></div>
     <ol class="steps">${steps.map((m) => `<li><span>${esc(m.instruction)}</span><small>${m.length ? fmtKm(m.length) : ''}</small></li>`).join('')}</ol>`;
+  showAlongRoute();
   checkRouteLimits(coords);
 }
 
@@ -345,6 +346,85 @@ function servicesOf(t, kind) {
 
 let lastPlaces = [];
 let placesShown = null;
+
+// Lugares guardados en la propia web, en trozos de 1x1 grado (se actualizan con GitHub Actions).
+const TYPES = { n: 'node', w: 'way', r: 'relation' };
+let tileIndex;            // undefined = sin mirar, null = no hay datos guardados
+const tileCache = new Map();
+async function getTileIndex() {
+  if (tileIndex !== undefined) return tileIndex;
+  try {
+    const r = await fetch('data/places/index.json', { cache: 'no-cache' });
+    const j = r.ok ? await r.json() : null;
+    tileIndex = j ? { ...j, set: new Set(j.tiles) } : null;
+  } catch { tileIndex = null; }
+  return tileIndex;
+}
+async function getTile(key) {
+  if (!tileCache.has(key)) {
+    tileCache.set(key, fetch(`data/places/${key}.json`).then((r) => (r.ok ? r.json() : [])).then((arr) => arr.map(([k, lat, lon, tags]) => ({
+      type: TYPES[k[0]], id: +k.slice(1), lat, lon, tags,
+    }))).catch(() => { tileCache.delete(key); throw new Error('tile'); }));
+  }
+  return tileCache.get(key);
+}
+async function tilesIn(keys) {
+  const idx = await getTileIndex();
+  const wanted = [...keys].filter((k) => idx.set.has(k));
+  return (await Promise.all(wanted.map(getTile))).flat();
+}
+function keysForBounds(b) {
+  const keys = new Set();
+  for (let la = Math.floor(b.getSouth()); la <= Math.floor(b.getNorth()); la++)
+    for (let lo = Math.floor(b.getWest()); lo <= Math.floor(b.getEast()); lo++) keys.add(`${la}_${lo}`);
+  return keys;
+}
+async function placesInBounds(b) {
+  if (!(await getTileIndex())) return overpass(placesQuery(boxFilter(b)));  // sin datos guardados: servidor
+  return (await tilesIn(keysForBounds(b))).filter((e) => b.contains([e.lat, e.lon]));
+}
+
+// Lugares a lo largo de la ruta: a menos de 3 km del camino, con el km en el que quedan.
+async function placesAlongRoute(coords, maxKm = 3) {
+  const line = simplify(coords, 0.0005);
+  const lat0 = line[0][0] * Math.PI / 180, kx = 111.32 * Math.cos(lat0), ky = 110.57;
+  const P = line.map(([la, lo]) => [lo * kx, la * ky]);
+  const cum = [0]; for (let i = 1; i < P.length; i++) cum.push(cum[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+  let all;
+  if (await getTileIndex()) {
+    const keys = new Set();
+    for (const [la, lo] of coords) for (const d of [-0.05, 0.05]) { keys.add(`${Math.floor(la + d)}_${Math.floor(lo)}`); keys.add(`${Math.floor(la)}_${Math.floor(lo + d)}`); }
+    all = await tilesIn(keys);
+  } else {
+    all = await overpass(placesQuery(`(around:${maxKm * 1000},${routeLine(400)})`));
+  }
+  const out = [];
+  for (const e of all) {
+    const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon; if (la == null) continue;
+    const x = lo * kx, y = la * ky; let best = Infinity, at = 0;
+    for (let i = 1; i < P.length; i++) {
+      const [x1, y1] = P[i - 1], [x2, y2] = P[i]; const dx = x2 - x1, dy = y2 - y1; const L2 = dx * dx + dy * dy;
+      let t = L2 ? ((x - x1) * dx + (y - y1) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(x1 + t * dx - x, y1 + t * dy - y);
+      if (d < best) { best = d; at = cum[i - 1] + t * Math.sqrt(L2); }
+    }
+    if (best <= maxKm) out.push({ ...e, _km: at });
+  }
+  return out;
+}
+async function showAlongRoute() {
+  if (!currentRoute) return;
+  const coords = currentRoute;
+  alongRoute = true;
+  status('Buscando áreas, agua y parkings en toda la ruta…');
+  try {
+    const els = await placesAlongRoute(coords);
+    if (currentRoute !== coords) return;
+    lastPlaces = els;
+    const n = renderPlaces(els);
+    status(n ? `${n} lugares a lo largo de la ruta` : 'No hay lugares registrados junto a esta ruta', n ? 'ok' : '');
+  } catch (e) { console.error(e); status('No he podido cargar los lugares de la ruta. Pulsa "Buscar a lo largo de la ruta" para reintentar.', 'err'); }
+}
 function renderPlaces(elements) {
   placesLayer.clearLayers();
   const enabled = new Set($$('.filters input[data-kind]').filter((i) => i.checked).map((i) => i.dataset.kind));
@@ -358,10 +438,11 @@ function renderPlaces(elements) {
     const kind = kindOf(t); if (!enabled.has(kind)) continue;
     const price = priceInfo(t);
     if (onlyFree && !(price.cls === 'free' || price.cls === 'cheap')) continue;
-    items.push({ el, t, lat, lon, kind, price });
+    items.push({ el, t, lat, lon, kind, price, km: el._km });
   }
   const order = { free: 0, cheap: 1, unknown: 2, paid: 3 };
-  items.sort((a, b) => order[a.price.cls] - order[b.price.cls]);
+  if (items.length && items[0].km != null) items.sort((a, b) => a.km - b.km);
+  else items.sort((a, b) => order[a.price.cls] - order[b.price.cls]);
   const ul = $('#placeList'); ul.innerHTML = '';
   for (const it of items) {
     const { t, lat, lon, kind, price } = it;
@@ -386,7 +467,7 @@ function renderPlaces(elements) {
       if (b) b.onclick = () => { setPoint('to', { lat, lon, name }); showTab('ruta'); route(); };
     });
     const li = document.createElement('li');
-    li.innerHTML = `<div class="t">${KINDS[kind].icon} ${esc(name)}</div><div class="s"><span class="badge ${price.cls}">${price.text}</span>${svc.map(esc).join(' · ')}</div>`;
+    li.innerHTML = `<div class="t">${it.km != null ? `<span class="km">km ${Math.round(it.km)}</span>` : ''}${KINDS[kind].icon} ${esc(name)}</div><div class="s"><span class="badge ${price.cls}">${price.text}</span>${svc.map(esc).join(' · ')}</div>`;
     li.onclick = () => { map.setView([lat, lon], Math.max(map.getZoom(), 14)); m.openPopup(); if (innerWidth < 760) closeSheet(); };
     ul.appendChild(li);
   }
@@ -415,6 +496,10 @@ function searchBox(minHalfDeg) {
   return L.latLngBounds([c.lat - hLat, c.lng - hLon], [c.lat + hLat, c.lng + hLon]);
 }
 const boxFilter = (b) => `(${b.getSouth().toFixed(4)},${b.getWest().toFixed(4)},${b.getNorth().toFixed(4)},${b.getEast().toFixed(4)})`;
+async function loadBox(b) {
+  try { lastPlaces = await placesInBounds(b); renderPlaces(lastPlaces); return true; }
+  catch (e) { console.error(e); return false; }
+}
 let autoTimer, autoBusy = false;
 function autoPlaces() {
   clearTimeout(autoTimer);
@@ -426,11 +511,11 @@ function autoPlaces() {
     try {
       status('Cargando áreas y parkings…');
       let b = searchBox(0.12);
-      let ok = await searchPlaces(boxFilter(b), '', true);
+      let ok = await loadBox(b);
       if (ok && !placesShown) {
         status('No hay nada cerca, busco más lejos…');
         b = searchBox(0.45);
-        ok = await searchPlaces(boxFilter(b), '', true);
+        ok = await loadBox(b);
         if (ok && placesShown) map.fitBounds(L.latLngBounds(placesShown.map((x) => [x.lat, x.lon])).extend(map.getCenter()), { padding: [40, 40], maxZoom: 13 });
       }
       if (!ok) { status('El servidor de datos no responde. Reintento en 20 s…', 'err'); autoTimer = setTimeout(autoPlaces, 20000); return; }
@@ -445,7 +530,7 @@ $('#btnSearchHere').onclick = () => {
   alongRoute = false; loadedBounds = null; autoPlaces();
   toast('Buscando lugares en esta zona…');
 };
-$('#btnAlongRoute').onclick = () => { if (currentRoute) { alongRoute = true; } if (currentRoute) searchPlaces(`(around:3000,${routeLine(400)})`, 'a lo largo de la ruta'); };
+$('#btnAlongRoute').onclick = () => { showAlongRoute(); showTab('lugares'); };
 $$('.filters input').forEach((i) => { i.onchange = () => renderPlaces(lastPlaces); });
 
 // ---------- Límites: altura, ancho, peso ----------
