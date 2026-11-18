@@ -129,3 +129,29 @@ button.small { background: none; border: 1px solid var(--line); color: var(--fg)
 .leaflet-popup-content .links a.alt { background: #55625d; }
 .leaflet-bottom.leaflet-left, .leaflet-bottom.leaflet-right { margin-bottom: 136px; }
 @media (min-width: 760px) { .leaflet-bottom.leaflet-left, .leaflet-bottom.leaflet-right { margin-bottom: 0; } }
+
+/* Flecha de posición */
+.me { width: 40px; height: 40px; transition: transform .4s; filter: drop-shadow(0 2px 4px rgba(0,0,0,.4)); }
+.fab.on-follow { color: #1a73e8; }
+
+/* Botón Navegar, encima del panel */
+#btnNav { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(146px + env(safe-area-inset-bottom)); z-index: 1001;
+  padding: 14px 28px; font-size: 18px; border-radius: 28px; box-shadow: var(--shadow); flex: none; }
+#btnNav[hidden] { display: none; }
+
+/* Modo navegación */
+#navTop, #navBottom { display: none; }
+body.navigating #sheet, body.navigating #topbar, body.navigating #btnNav, body.navigating #placesStatus { display: none !important; }
+body.navigating #navTop { display: flex; position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 8px; right: 8px; z-index: 1100;
+  background: #1f6f5c; color: #fff; border-radius: 16px; padding: 12px 14px; gap: 14px; align-items: center; box-shadow: var(--shadow); }
+#navArrow { font-size: 44px; line-height: 1; }
+#navDist { font-size: 30px; font-weight: 800; }
+#navText { font-size: 17px; font-weight: 600; }
+body.navigating #navBottom { display: flex; position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 1100;
+  background: var(--bg); color: var(--fg); border-radius: 16px; padding: 10px; gap: 8px; align-items: center; box-shadow: var(--shadow); }
+#navRemain { flex: 1; font-weight: 700; font-size: 15px; text-align: center; }
+.navbtn { background: var(--line); color: var(--fg); min-width: 48px; height: 48px; font-size: 20px; padding: 0 12px; }
+.navbtn.stop { background: var(--danger); color: #fff; font-size: 16px; font-weight: 700; }
+body.navigating .leaflet-bottom.leaflet-left, body.navigating .leaflet-bottom.leaflet-right { margin-bottom: 80px; }
+body.navigating #toast { top: calc(130px + env(safe-area-inset-top)); }
+@media (min-width: 760px) { #btnNav { bottom: 24px; left: calc(50% + 196px); } }

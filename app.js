@@ -96,29 +96,50 @@ function locate(fly = true) {
     navigator.geolocation.getCurrentPosition((p) => {
       myPos = { lat: p.coords.latitude, lon: p.coords.longitude };
       if (meMarker) meMarker.setLatLng([myPos.lat, myPos.lon]);
-      else meMarker = L.circleMarker([myPos.lat, myPos.lon], { radius: 9, color: '#fff', weight: 3, fillColor: '#1a73e8', fillOpacity: 1 }).addTo(map).bindTooltip('Estás aquí');
+      else meMarker = L.marker([myPos.lat, myPos.lon], { icon: meIcon(), zIndexOffset: 1000, interactive: false }).addTo(map);
       if (fly) map.setView([myPos.lat, myPos.lon], Math.max(map.getZoom(), 12));
       toast('Posición encontrada'); resolve(myPos);
     }, () => { toast('No he podido obtener tu posición. Revisa el permiso de ubicación.'); resolve(null); },
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
   });
 }
-$('#btnLocate').onclick = () => locate(true);
+$('#btnLocate').onclick = () => { setFollowing(true); if (!myPos) locate(true); else map.setView([myPos.lat, myPos.lon], Math.max(map.getZoom(), 15)); };
 
+// Flecha azul que gira hacia donde vamos. El mapa la sigue hasta que lo mueves con el dedo.
+let following = true, lastHeading = 0, prevPos = null;
+const meIcon = () => L.divIcon({ className: '', html: '<div id="meArrow" class="me"><svg viewBox="0 0 40 40" width="40" height="40"><circle cx="20" cy="20" r="17" fill="#1a73e8" stroke="#fff" stroke-width="4"/><path d="M20 8 L29 28 L20 23 L11 28 Z" fill="#fff"/></svg></div>', iconSize: [40, 40], iconAnchor: [20, 20] });
+function updateHeading(p) {
+  let h = p.heading;
+  if ((h == null || isNaN(h)) && prevPos) {
+    const dy = p.lat - prevPos.lat, dx = (p.lon - prevPos.lon) * Math.cos(p.lat * Math.PI / 180);
+    if (Math.hypot(dx, dy) > 0.00004) h = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
+  }
+  if (h != null && !isNaN(h)) { lastHeading = h; prevPos = p; } else if (!prevPos) prevPos = p;
+  else if (Math.hypot(p.lat - prevPos.lat, p.lon - prevPos.lon) > 0.00004) prevPos = p;
+  const el = document.getElementById('meArrow'); if (el) el.style.transform = `rotate(${lastHeading}deg)`;
+}
+function setFollowing(on) {
+  following = on; $('#btnLocate').classList.toggle('on-follow', on);
+  if (on && myPos) map.panTo([myPos.lat, myPos.lon]);
+}
+map.on('dragstart', () => setFollowing(false));
 function startTracking() {
   if (!navigator.geolocation) return;
   let first = true;
   navigator.geolocation.watchPosition((p) => {
-    myPos = { lat: p.coords.latitude, lon: p.coords.longitude };
+    myPos = { lat: p.coords.latitude, lon: p.coords.longitude, heading: p.coords.heading, speed: p.coords.speed, acc: p.coords.accuracy };
     if (meMarker) meMarker.setLatLng([myPos.lat, myPos.lon]);
-    else meMarker = L.circleMarker([myPos.lat, myPos.lon], { radius: 10, color: '#fff', weight: 3, fillColor: '#1a73e8', fillOpacity: 1 }).addTo(map).bindTooltip('Estás aquí');
+    else meMarker = L.marker([myPos.lat, myPos.lon], { icon: meIcon(), zIndexOffset: 1000, interactive: false }).addTo(map);
+    updateHeading(myPos);
+    if (following && !first) map.panTo([myPos.lat, myPos.lon], { animate: true, duration: 0.5 });
+    if (nav.active) navUpdate(myPos);
     if (first) {
       first = false;
       map.setView([myPos.lat, myPos.lon], 13);
       if (!points.from) setPoint('from', { ...myPos, name: 'Mi posición' });
     }
-  }, () => { toast('Activa el permiso de ubicación para ver dónde estás'); },
-  { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 });
+  }, (err) => { if (err.code === 1) toast('Activa el permiso de ubicación para ver dónde estás', 5000); },
+  { enableHighAccuracy: true, timeout: 30000, maximumAge: 2000 });
 }
 
 // ---------- Búsqueda de lugares (Nominatim) ----------
@@ -187,7 +208,7 @@ function decodePolyline6(str) {
 
 let currentRoute = null; // [[lat,lon], ...]
 
-async function route() {
+async function route(opts = {}) {
   $('#suggest').hidden = true;
   const info = $('#routeInfo');
   try {
@@ -201,9 +222,11 @@ async function route() {
       if ($('#to').value.trim()) { await showSuggestions('to'); toast('Elige el destino de la lista'); return; }
       toast('Indica a dónde vas'); return;
     }
-    info.innerHTML = '<p class="hint">Calculando una ruta por donde cabe Etxeleku…</p>';
+    if (!opts.reroute) info.innerHTML = '<p class="hint">Calculando una ruta por donde cabe Etxeleku…</p>';
+    const start = { lat: points.from.lat, lon: points.from.lon };
+    if (opts.reroute && myPos && myPos.heading != null && !isNaN(myPos.heading)) { start.heading = Math.round(myPos.heading); start.heading_tolerance = 45; }
     const body = {
-      locations: [{ lat: points.from.lat, lon: points.from.lon }, { lat: points.to.lat, lon: points.to.lon }],
+      locations: [start, { lat: points.to.lat, lon: points.to.lon }],
       costing: 'truck',
       costing_options: { truck: {
         height: vehicle.height, width: vehicle.width, length: vehicle.length, weight: vehicle.weight,
@@ -216,16 +239,20 @@ async function route() {
     const data = await r.json();
     if (!r.ok || !data.trip) {
       info.innerHTML = `<p class="warn">No encuentro una ruta por donde quepa Etxeleku entre esos dos puntos. ${esc(data.error || '')}</p>`;
-      return;
+      return false;
     }
-    drawRoute(data.trip);
+    drawRoute(data.trip, opts);
+    return true;
   } catch (e) {
     console.error(e);
     info.innerHTML = '<p class="warn">No he podido conectar con el servidor de rutas. Revisa la conexión y prueba otra vez.</p>';
+    return false;
   }
 }
 
-function drawRoute(trip) {
+let currentTrip = null;
+function drawRoute(trip, opts = {}) {
+  currentTrip = trip;
   routeLayer.clearLayers();
   const coords = trip.legs.flatMap((l) => decodePolyline6(l.shape));
   currentRoute = coords;
@@ -233,10 +260,13 @@ function drawRoute(trip) {
   const line = L.polyline(coords, { color: '#1f6f5c', weight: 6 }).addTo(routeLayer);
   L.circleMarker(coords[0], { radius: 7, color: '#fff', weight: 3, fillColor: '#1f6f5c', fillOpacity: 1 }).addTo(routeLayer);
   L.circleMarker(coords[coords.length - 1], { radius: 8, color: '#fff', weight: 3, fillColor: '#c0392b', fillOpacity: 1 }).addTo(routeLayer);
-  map.fitBounds(line.getBounds(), { padding: [30, 30] });
   $('#btnAlongRoute').disabled = false;
-  toast(`Ruta lista: ${fmtKm(trip.summary.length)}, ${fmtTime(trip.summary.time)}. Abre el panel para ver los detalles.`, 4500);
-  if (innerWidth < 760) closeSheet();
+  $('#btnNav').hidden = false;
+  if (opts.reroute) { navNewRoute(); } else {
+    map.fitBounds(line.getBounds(), { padding: [30, 30] }); setFollowing(false);
+    toast(`Ruta lista: ${fmtKm(trip.summary.length)}, ${fmtTime(trip.summary.time)}. Pulsa ▶ Navegar para empezar.`, 4500);
+    if (innerWidth < 760) closeSheet();
+  }
 
   const steps = trip.legs.flatMap((l) => l.maneuvers);
   $('#routeInfo').innerHTML = `
@@ -245,11 +275,12 @@ function drawRoute(trip) {
     <div id="routeCheck"><p class="hint">Comprobando puentes y límites en el camino…</p></div>
     <ol class="steps">${steps.map((m) => `<li><span>${esc(m.instruction)}</span><small>${m.length ? fmtKm(m.length) : ''}</small></li>`).join('')}</ol>`;
   showAlongRoute();
-  checkRouteLimits(coords);
+  if (!opts.reroute) checkRouteLimits(coords);
 }
 
 $('#btnRoute').onclick = route;
 $('#btnClear').onclick = () => {
+  navStop(); $('#btnNav').hidden = true; currentTrip = null;
   routeLayer.clearLayers(); currentRoute = null; points.from = points.to = null; alongRoute = false; loadedBounds = null; autoPlaces();
   $('#from').value = ''; $('#to').value = ''; $('#routeInfo').innerHTML = ''; $('#btnAlongRoute').disabled = true;
 };
@@ -616,6 +647,127 @@ $('#btnSaveVehicle').onclick = () => {
 };
 $('#btnResetVehicle').onclick = () => { vehicle = { ...DEFAULT_VEHICLE }; store.set('vehicle', vehicle); fillVehicle(); toast('Medidas de Etxeleku restauradas'); };
 fillVehicle();
+
+// ---------- Navegación guiada con voz ----------
+const nav = { active: false, idx: 0, step: 0, said: {}, off: 0, rerouting: false, lastReroute: 0, wake: null, P: null, cum: null, k: null };
+let voiceOn = true, esVoice = null;
+function pickVoice() {
+  const vs = speechSynthesis.getVoices();
+  esVoice = vs.find((v) => v.lang === 'es-ES') || vs.find((v) => v.lang && v.lang.startsWith('es')) || null;
+}
+if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+function say(text, urgent = false) {
+  if (!voiceOn || !text || !('speechSynthesis' in window)) return;
+  if (urgent) speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text); u.lang = 'es-ES'; if (esVoice) u.voice = esVoice; u.rate = 1;
+  speechSynthesis.speak(u);
+}
+const fmtDist = (m) => m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1).replace('.', ',') + ' km' : (m >= 100 ? Math.round(m / 50) * 50 : Math.max(10, Math.round(m / 10) * 10)) + ' m';
+const sayDist = (m) => m >= 1000 ? `${(Math.round(m / 100) / 10).toString().replace('.', ',')} kilómetros` : `${Math.round(m / 50) * 50 || Math.round(m / 10) * 10} metros`;
+const ARROWS = { 1: '⬆️', 2: '⬆️', 3: '⬆️', 4: '🏁', 5: '🏁', 6: '🏁', 7: '⬆️', 8: '⬆️', 9: '↗️', 10: '➡️', 11: '↪️', 12: '↩️', 13: '↩️', 14: '⬅️', 15: '↖️', 16: '⬆️', 17: '⬆️', 18: '↗️', 19: '↖️', 20: '↗️', 21: '↖️', 22: '⬆️', 23: '↗️', 24: '↖️', 25: '⬆️', 26: '🔄', 27: '🔄', 37: '↗️', 38: '↖️' };
+
+function navPrepare() {
+  const pts = currentRoute;
+  const lat0 = pts[0][0] * Math.PI / 180;
+  nav.k = [111320 * Math.cos(lat0), 110570];
+  nav.P = pts.map(([la, lo]) => [lo * nav.k[0], la * nav.k[1]]);
+  nav.cum = [0];
+  for (let i = 1; i < nav.P.length; i++) nav.cum.push(nav.cum[i - 1] + Math.hypot(nav.P[i][0] - nav.P[i - 1][0], nav.P[i][1] - nav.P[i - 1][1]));
+  nav.steps = currentTrip.legs[0].maneuvers;
+  nav.idx = 0; nav.step = 0; nav.said = {}; nav.off = 0;
+}
+function navNewRoute() { if (nav.active) { navPrepare(); nav.rerouting = false; if (myPos) navUpdate(myPos); } }
+
+// Punto de la ruta más cercano (busca cerca del último para ir rápido).
+function snap(p) {
+  const x = p.lon * nav.k[0], y = p.lat * nav.k[1];
+  let best = Infinity, bi = nav.idx, bt = 0;
+  const from = Math.max(1, nav.idx - 30), to = Math.min(nav.P.length - 1, nav.idx + 400);
+  const scan = (a, b) => {
+    for (let i = a; i <= b; i++) {
+      const [x1, y1] = nav.P[i - 1], [x2, y2] = nav.P[i]; const dx = x2 - x1, dy = y2 - y1; const L2 = dx * dx + dy * dy;
+      let t = L2 ? ((x - x1) * dx + (y - y1) * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(x1 + t * dx - x, y1 + t * dy - y);
+      if (d < best) { best = d; bi = i - 1; bt = t; }
+    }
+  };
+  scan(from, to);
+  if (best > 80) scan(1, nav.P.length - 1);
+  return { dist: best, idx: bi, along: nav.cum[bi] + bt * (nav.cum[bi + 1] - nav.cum[bi]) };
+}
+
+function navUpdate(p) {
+  if (!nav.P) return;
+  const s = snap(p);
+  // ¿Fuera de la ruta? Recalcular (respetando las medidas de Etxeleku).
+  const tol = Math.max(45, Math.min(120, (p.acc || 20) * 1.5));
+  if (s.dist > tol) nav.off++; else nav.off = 0;
+  if (nav.off >= 3 && !nav.rerouting && Date.now() - nav.lastReroute > 15000) { navReroute(); return; }
+  if (s.dist <= tol) nav.idx = s.idx;
+  const along = s.along, total = nav.cum[nav.cum.length - 1];
+  // Siguiente maniobra: la primera que empieza por delante de nosotros.
+  let k = nav.step;
+  while (k < nav.steps.length - 1 && nav.cum[nav.steps[k].begin_shape_index] <= along + 5) k++;
+  if (k !== nav.step) {
+    nav.step = k;
+    const prev = nav.steps[k - 1];
+    if (prev && prev.verbal_post_transition_instruction && !nav.said[`post${k}`]) { nav.said[`post${k}`] = 1; say(prev.verbal_post_transition_instruction); }
+  }
+  const m = nav.steps[nav.step];
+  const toNext = Math.max(0, nav.cum[m.begin_shape_index] - along);
+  const remain = Math.max(0, total - along);
+  // Avisos por voz: lejos (según velocidad), cerca, y en el momento.
+  const v = Math.max(p.speed || 0, 8);
+  const far = v > 22 ? 1500 : v > 14 ? 800 : 400, near = v > 22 ? 400 : v > 14 ? 250 : 120;
+  const text = m.verbal_pre_transition_instruction || m.instruction;
+  const alert = m.verbal_transition_alert_instruction || text;
+  const isEnd = m.type >= 4 && m.type <= 6;
+  if (toNext <= far && toNext > near * 1.3 && !nav.said[`far${nav.step}`] && toNext > 200) { nav.said[`far${nav.step}`] = 1; say(`Dentro de ${sayDist(toNext)}, ${lower(alert)}`); }
+  if (toNext <= near && !nav.said[`near${nav.step}`]) { nav.said[`near${nav.step}`] = 1; nav.said[`far${nav.step}`] = 1; say(isEnd ? text : (toNext > 60 ? `Dentro de ${sayDist(toNext)}, ${lower(text)}` : text), true); }
+  // Pantalla
+  $('#navArrow').textContent = ARROWS[m.type] || '⬆️';
+  $('#navDist').textContent = fmtDist(toNext);
+  $('#navText').textContent = m.instruction;
+  const secs = currentTrip.summary.time * (remain / Math.max(total, 1));
+  const eta = new Date(Date.now() + secs * 1000);
+  $('#navRemain').textContent = `${fmtKm(remain / 1000)} · ${fmtTime(secs)} · llegada ${eta.getHours()}:${String(eta.getMinutes()).padStart(2, '0')}`;
+  if (remain < 30 && !nav.said.end) { nav.said.end = 1; say('Has llegado a tu destino.', true); setTimeout(navStop, 8000); }
+}
+const lower = (t) => t ? t.charAt(0).toLowerCase() + t.slice(1) : t;
+
+async function navReroute() {
+  nav.rerouting = true; nav.lastReroute = Date.now();
+  $('#navText').textContent = 'Recalculando ruta para Etxeleku…';
+  say('Recalculando.', true);
+  points.from = { ...myPos, name: 'Mi posición' };
+  const ok = await route({ reroute: true });
+  if (!ok) { nav.rerouting = false; $('#navText').textContent = 'Sin conexión para recalcular. Vuelve a la ruta marcada.'; }
+}
+
+async function navStart() {
+  if (!currentTrip) return;
+  if (!myPos) { await locate(false); if (!myPos) { toast('Necesito tu posición para guiarte'); return; } }
+  nav.active = true; navPrepare();
+  document.body.classList.add('navigating'); closeSheet();
+  setFollowing(true); map.setView([myPos.lat, myPos.lon], 17);
+  try { nav.wake = await navigator.wakeLock?.request('screen'); } catch { /* sin bloqueo de pantalla */ }
+  say('Empezamos. ' + (nav.steps[0].verbal_pre_transition_instruction || nav.steps[0].instruction || ''), true);
+  navUpdate(myPos);
+}
+function navStop() {
+  if (!nav.active) return;
+  nav.active = false; document.body.classList.remove('navigating');
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  try { nav.wake?.release(); } catch { /* nada */ }
+  nav.wake = null;
+}
+document.addEventListener('visibilitychange', async () => {
+  if (nav.active && document.visibilityState === 'visible') { try { nav.wake = await navigator.wakeLock?.request('screen'); } catch { /* nada */ } }
+});
+$('#btnNav').onclick = navStart;
+$('#navStop').onclick = () => { navStop(); toast('Navegación terminada'); };
+$('#navVoice').onclick = () => { voiceOn = !voiceOn; $('#navVoice').textContent = voiceOn ? '🔊' : '🔇'; if (!voiceOn) speechSynthesis.cancel(); };
+$('#navRecenter').onclick = () => { setFollowing(true); map.setZoom(17); };
 
 // ---------- App instalable / sin conexión ----------
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
