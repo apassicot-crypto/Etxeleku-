@@ -135,7 +135,7 @@ function startTracking() {
     if (nav.active) navUpdate(myPos);
     if (first) {
       first = false;
-      map.setView([myPos.lat, myPos.lon], 13);
+      if (!currentRoute) map.setView([myPos.lat, myPos.lon], 13); // si ya hay ruta, no la tapamos
       if (!points.from) setPoint('from', { ...myPos, name: 'Mi posición' });
     }
   }, (err) => { if (err.code === 1) toast('Activa el permiso de ubicación para ver dónde estás', 5000); },
@@ -777,3 +777,20 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 // Al abrir la app: buscar tu posición y los lugares de alrededor.
 startTracking();
 autoPlaces();
+
+// Abrir con el destino ya puesto y la ruta calculada.
+// Lo usa el botón "Ruta con Etxeleku" de la web Escapadas con Etxeleku:
+//   ?lat=40.7622&lon=0.7977&nombre=Faro del Fangar
+(function destinoDesdeEnlace() {
+  const q = new URLSearchParams(location.search);
+  const lat = parseFloat(q.get('lat')), lon = parseFloat(q.get('lon'));
+  if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
+  const name = (q.get('nombre') || '').trim().slice(0, 80) || `Punto ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+  // Quitamos los datos de la dirección para que, al recargar o instalar la app, no se repita.
+  try { history.replaceState(null, '', location.pathname); } catch { /* nada */ }
+  setPoint('to', { lat, lon, name });
+  map.setView([lat, lon], 12);
+  showTab('ruta');
+  toast(`Calculando la ruta hasta ${name}…`, 0);
+  route();
+})();

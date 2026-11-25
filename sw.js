@@ -1,5 +1,5 @@
 // Guarda la app en el móvil para que abra aunque no haya cobertura.
-const CACHE = 'etxeleku-v6';
+const CACHE = 'etxeleku-v7';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'lib/leaflet.js', 'lib/leaflet.css', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon.svg'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
